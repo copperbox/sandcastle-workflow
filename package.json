@@ -1,6 +1,6 @@
 {
   "name": "@copperbox/sandcastle-workflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Reusable Sandcastle workflow: turns labelled GitHub issues into reviewed, version-bumped feature PRs via sandboxed coding agents.",
   "license": "MIT",
   "type": "module",

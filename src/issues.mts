@@ -12,14 +12,29 @@
 import type { ResolvedConfig } from "./config.mjs";
 import { gh } from "./exec.mjs";
 
+// One issue comment, attributed so the workflow (and the agents reading
+// ISSUES_JSON) can tell who said what. `association` is GitHub's
+// authorAssociation: OWNER, MEMBER, COLLABORATOR, CONTRIBUTOR, NONE, ...
+export interface IssueComment {
+  author: string;
+  association: string;
+  body: string;
+}
+
 // The shape emitted by the gh --jq projection below, one entry per issue.
 export interface SandcastleIssue {
   number: number;
   title: string;
   body: string;
   labels: string[];
-  comments: string[];
+  comments: IssueComment[];
 }
+
+// Author associations whose comments are kept when trustedCommentsOnly is on.
+// Everyone else (CONTRIBUTOR, FIRST_TIMER, NONE, ...) can be an arbitrary
+// member of the public on a public repo, so their comments are treated as
+// untrusted input and never reach an agent prompt.
+const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 export function createIssueQueries(cfg: ResolvedConfig) {
   async function ghJson(args: string[]): Promise<string> {
@@ -46,16 +61,33 @@ export function createIssueQueries(cfg: ResolvedConfig) {
       "--json",
       "number,title,body,labels,comments",
       "--jq",
-      "[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]",
+      '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[] | {author: (.author.login // "unknown"), association: .authorAssociation, body}]}]',
     ]);
 
     const issues = JSON.parse(stdout) as SandcastleIssue[];
 
-    return issues.filter((issue) => {
+    const queued = issues.filter((issue) => {
       const labels = issue.labels.map((l) => l.toLowerCase());
       const isQueued = labels.includes(cfg.queueLabel.toLowerCase());
       const inReview = labels.includes(cfg.inReviewLabel.toLowerCase());
       return isQueued && !inReview;
+    });
+
+    if (!cfg.trustedCommentsOnly) return queued;
+
+    // Drop untrusted comments BEFORE anything downstream sees the issue, so no
+    // prompt (planner or implementer) is ever built from them.
+    return queued.map((issue) => {
+      const comments = issue.comments.filter((c) =>
+        TRUSTED_ASSOCIATIONS.has(c.association.toUpperCase()),
+      );
+      const dropped = issue.comments.length - comments.length;
+      if (dropped > 0) {
+        console.warn(
+          `  · issue #${issue.number}: dropped ${dropped} comment(s) from untrusted authors (security.trustedCommentsOnly).`,
+        );
+      }
+      return { ...issue, comments };
     });
   }
 

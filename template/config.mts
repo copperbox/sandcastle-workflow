@@ -19,6 +19,12 @@ export default defineConfig({
   // to verify UI changes end-to-end inside the sandbox.
   // implementNotes: "",
 
+  // Hardening for public repos. trustedCommentsOnly (default true) drops issue
+  // comments from non-OWNER/MEMBER/COLLABORATOR authors before any prompt is
+  // built. lockOnQueue (default false) locks each queued issue's conversation
+  // to collaborators the first time the workflow picks it up.
+  // security: { lockOnQueue: true, trustedCommentsOnly: true },
+
   // Pathspecs excluded from the diff the reviewer sees (generated artifacts).
   // review: { diffExcludes: ["generated-dir/**"] },
 

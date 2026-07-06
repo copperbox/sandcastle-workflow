@@ -78,6 +78,11 @@ The outer loop runs up to `maxIterations` times. Each iteration:
 
 If there are no queued issues, exit **3** (idle).
 
+Queued issues are then hardened per `security` config: untrusted authors'
+comments were already dropped from the queue data (`trustedCommentsOnly`,
+default on), and with `lockOnQueue` each queued issue's conversation is locked
+to collaborators.
+
 ### Phase 1 — Plan (one planner agent)
 The planner groups the queued issues into features, **respecting the fixed
 membership of features that already have an open PR**, and marks each issue

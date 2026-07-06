@@ -12,4 +12,4 @@ export {
   type SandboxProvider,
 } from "./config.mjs";
 export type { FeatureMember, FeaturePR } from "./repo-ops.mjs";
-export type { SandcastleIssue } from "./issues.mjs";
+export type { IssueComment, SandcastleIssue } from "./issues.mjs";

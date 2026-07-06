@@ -91,6 +91,27 @@ the full typed reference.
 | `review.diffExcludes` | Pathspecs hidden from the reviewer's diff (generated artifacts) |
 | `implementNotes` | Extra repo-specific guidance injected into the implementer prompt |
 | `prompts.dir` | Prompt-override directory (`./.sandcastle/prompts`) |
+| `security.trustedCommentsOnly` | Drop issue comments from non-OWNER/MEMBER/COLLABORATOR authors before building prompts (`true`) |
+| `security.lockOnQueue` | Lock each queued issue's conversation to collaborators when first picked up (`false`) |
+
+### Public repos & untrusted input
+
+On a public repo anyone can open issues, but only users with triage permission
+can apply labels — so the queue label is already your gate (never auto-apply it
+via an issue template). Comments are the remaining channel: anyone can comment
+on a labelled issue, and comments flow into agent prompts. Two defenses are
+built in:
+
+- **`security.trustedCommentsOnly`** (default **on**): comments from authors
+  who aren't `OWNER`/`MEMBER`/`COLLABORATOR` are dropped in `checkTasks`,
+  before any prompt is built. The implementer receives the issue body and the
+  surviving comments **inline** (it is instructed not to re-fetch the issue),
+  so the filter is enforced by the module, not by agent behavior.
+- **`security.lockOnQueue`** (default off, recommended for public repos): each
+  queued issue's conversation is locked (collaborators-only) the first time
+  the workflow picks it up, closing the channel entirely going forward.
+
+Your manual review of the PRs the workflow opens remains the final gate.
 
 ### Prompt overrides
 

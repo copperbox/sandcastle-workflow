@@ -102,6 +102,19 @@ export interface FeatureFlowConfig {
   // Extra repo-specific guidance appended to the implementer prompt via
   // {{IMPLEMENT_NOTES}} (e.g. how to verify UI changes). Default: "".
   implementNotes?: string;
+
+  security?: {
+    // Lock each queued issue's conversation the first time the workflow picks
+    // it up, so only collaborators can comment afterwards. Closes the
+    // comment-injection channel on public repos. Default: false (mutates
+    // GitHub state, so it is opt-in).
+    lockOnQueue?: boolean;
+    // Only feed comments authored by OWNER/MEMBER/COLLABORATOR users to the
+    // agents; comments from anyone else are dropped before prompts are built.
+    // Default: true (harmless on private repos -- everyone who can comment is
+    // trusted there -- and safe-by-default on public ones).
+    trustedCommentsOnly?: boolean;
+  };
 }
 
 export interface ResolvedConfig {
@@ -121,6 +134,8 @@ export interface ResolvedConfig {
   promptsDir: string | null;
   reviewDiffExcludes: string[];
   implementNotes: string;
+  lockOnQueue: boolean;
+  trustedCommentsOnly: boolean;
 }
 
 // Fable 5 writes and reviews the code; Opus 4.8 handles the reasoning-heavy
@@ -158,6 +173,8 @@ export function resolveConfig(user: FeatureFlowConfig = {}): ResolvedConfig {
       user.prompts?.dir === undefined ? "./.sandcastle/prompts" : user.prompts.dir,
     reviewDiffExcludes: user.review?.diffExcludes ?? [],
     implementNotes: user.implementNotes ?? "",
+    lockOnQueue: user.security?.lockOnQueue ?? false,
+    trustedCommentsOnly: user.security?.trustedCommentsOnly ?? true,
   };
 }
 

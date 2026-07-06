@@ -202,6 +202,22 @@ export function createRepoOps(cfg: ResolvedConfig) {
     }
   }
 
+  // Lock an issue's conversation so only collaborators can comment. Used by
+  // security.lockOnQueue to close the comment-injection channel on public
+  // repos. The REST lock endpoint is an idempotent PUT, so locking an
+  // already-locked issue succeeds.
+  async function lockIssue(issueId: string | number): Promise<void> {
+    const res = await gh([
+      "api",
+      "-X",
+      "PUT",
+      `repos/{owner}/{repo}/issues/${issueId}/lock`,
+    ]);
+    if (res.code !== 0) {
+      throw new Error(`failed to lock issue #${issueId}: ${res.stderr.trim()}`);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Branches
   // -------------------------------------------------------------------------
@@ -553,6 +569,7 @@ export function createRepoOps(cfg: ResolvedConfig) {
     ensureInReviewLabel,
     addInReview,
     removeInReview,
+    lockIssue,
     ensureFeatureBranch,
     pushBranch,
     branchExists,

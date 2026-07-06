@@ -37,7 +37,7 @@ import {
   type Role,
 } from "./config.mjs";
 import { errMsg } from "./exec.mjs";
-import { createIssueQueries } from "./issues.mjs";
+import { createIssueQueries, type SandcastleIssue } from "./issues.mjs";
 import {
   createRepoOps,
   type FeatureMember,
@@ -141,12 +141,34 @@ export async function runFeatureFlow(
     }
   }
 
+  // The issue body/comments the implementer receives, rendered from the
+  // already-filtered queue data. The content is passed INLINE via promptArgs
+  // (never re-fetched by the agent), so the trustedCommentsOnly filter is
+  // enforced by the module rather than left to agent behavior. Sandcastle
+  // treats promptArg values as inert -- {{...}} and !`...` inside them are
+  // never substituted or executed.
+  function renderIssueBody(source: SandcastleIssue | undefined): string {
+    const body = source?.body.trim();
+    return body || "(no description provided -- rely on the title and repo exploration)";
+  }
+
+  function renderIssueComments(source: SandcastleIssue | undefined): string {
+    if (!source || source.comments.length === 0) return "(no comments)";
+    return source.comments
+      .map(
+        (c) =>
+          `<comment author="${c.author}" association="${c.association}">\n${c.body}\n</comment>`,
+      )
+      .join("\n\n");
+  }
+
   // Implement and (if it produced commits) review a single issue on its own
   // branch, cut off the feature branch. Best-effort: git state is the source of
   // truth for what actually landed, so we don't return a status here.
   async function implementAndReview(
     feature: PlanFeature,
     issue: PlanIssue,
+    source: SandcastleIssue | undefined,
   ): Promise<void> {
     const branch = ops.issueBranch(issue.id);
     await ops.removeLeakedWorktree(branch);
@@ -166,6 +188,8 @@ export async function runFeatureFlow(
         promptArgs: {
           TASK_ID: issue.id,
           ISSUE_TITLE: issue.title,
+          ISSUE_BODY: renderIssueBody(source),
+          ISSUE_COMMENTS: renderIssueComments(source),
           BRANCH: branch,
           VERIFY_COMMAND: cfg.verifyCommand,
           IMPLEMENT_NOTES: cfg.implementNotes,
@@ -342,6 +366,7 @@ export async function runFeatureFlow(
   async function runFeature(
     feature: PlanFeature,
     existing: FeaturePR | undefined,
+    issueByNumber: Map<string, SandcastleIssue>,
   ): Promise<void> {
     // Full, fixed membership: from the existing PR's marker if there is one,
     // else from the plan (a brand-new feature lists all its members, incl.
@@ -362,7 +387,9 @@ export async function runFeatureFlow(
 
     if (workable.length > 0) {
       const settled = await Promise.allSettled(
-        workable.map((issue) => implementAndReview(feature, issue)),
+        workable.map((issue) =>
+          implementAndReview(feature, issue, issueByNumber.get(String(issue.id))),
+        ),
       );
       for (const [i, outcome] of settled.entries()) {
         if (outcome.status === "rejected") {
@@ -612,6 +639,25 @@ export async function runFeatureFlow(
       `Found ${openIssues.length} ${cfg.queueLabel}-labelled open issue(s).`,
     );
 
+    // Lock queued issues so only collaborators can comment from here on
+    // (comments already posted by untrusted users are handled by the
+    // trustedCommentsOnly filter in checkTasks). Best-effort: a lock failure
+    // must not stop the run.
+    if (cfg.lockOnQueue) {
+      let locked = 0;
+      await Promise.all(
+        openIssues.map(async (issue) => {
+          try {
+            await ops.lockIssue(issue.number);
+            locked++;
+          } catch (err) {
+            console.warn(`  ⚠ could not lock issue #${issue.number}: ${errMsg(err)}`);
+          }
+        }),
+      );
+      console.log(`Locked ${locked} queued issue(s) (security.lockOnQueue).`);
+    }
+
     // Refresh after any re-bump edits so the planner sees current PR bodies.
     featurePRs = await ops.getOpenFeaturePRs();
 
@@ -673,8 +719,11 @@ export async function runFeatureFlow(
     // Phase 2: Deliver -- one independent, concurrent pipeline per feature.
     // -------------------------------------------------------------------------
     const byBranch = new Map(featurePRs.map((f) => [f.branch, f]));
+    const issueByNumber = new Map(
+      openIssues.map((i) => [String(i.number), i]),
+    );
     const settled = await Promise.allSettled(
-      features.map((f) => runFeature(f, byBranch.get(f.branch))),
+      features.map((f) => runFeature(f, byBranch.get(f.branch), issueByNumber)),
     );
     for (const [i, outcome] of settled.entries()) {
       if (outcome.status === "rejected") {
