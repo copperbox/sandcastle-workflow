@@ -43,18 +43,23 @@ never overflow the prompt.
    - Remove helpful abstractions that improve code organization
    - Make the code harder to debug or extend
 
-5. **Apply project standards**: Follow the coding standards defined in @.sandcastle/CODING_STANDARDS.md
+5. **Keep the README up to date**: Read the project's README.md and check it against the diff:
+   - If the branch adds or changes anything a README reader should know about (features, commands, configuration options, setup steps, usage examples), update README.md to reflect it
+   - If the branch removes or renames something the README mentions, correct those references
+   - Match the README's existing tone, structure, and level of detail - document what users of the project need, not internal implementation details
 
-6. **Preserve functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact.
+6. **Apply project standards**: Follow the coding standards defined in @.sandcastle/CODING_STANDARDS.md
+
+7. **Preserve functionality**: Never change what the code does - only how it does it. All original features, outputs, and behaviors must remain intact. Documentation updates (like the README) are expected and do not count as functionality changes.
 
 # EXECUTION
 
-If you find improvements to make:
+If you find improvements to make (including README updates):
 
 1. Make the changes directly on this branch
 2. Run `{{VERIFY_COMMAND}}` to ensure nothing is broken
 3. Commit describing the refinements
 
-If the code is already clean and well-structured, do nothing.
+If the code is already clean and well-structured and the README is up to date, do nothing.
 
 Once complete, output <promise>COMPLETE</promise>.
