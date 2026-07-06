@@ -1,0 +1,43 @@
+{
+  "name": "@copperbox/sandcastle-workflow",
+  "version": "0.1.0",
+  "description": "Reusable Sandcastle workflow: turns labelled GitHub issues into reviewed, version-bumped feature PRs via sandboxed coding agents.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/copperbox/sandcastle-workflow.git"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    }
+  },
+  "bin": {
+    "sandcastle-workflow": "./dist/init.mjs"
+  },
+  "files": [
+    "dist",
+    "prompts",
+    "template",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "^0.12.0",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
