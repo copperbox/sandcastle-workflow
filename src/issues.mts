@@ -33,8 +33,13 @@ export interface SandcastleIssue {
 // Author associations whose comments are kept when trustedCommentsOnly is on.
 // Everyone else (CONTRIBUTOR, FIRST_TIMER, NONE, ...) can be an arbitrary
 // member of the public on a public repo, so their comments are treated as
-// untrusted input and never reach an agent prompt.
-const TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+// untrusted input and never reach an agent prompt. Exported because the PR
+// review-feedback channel (feedback.mts) enforces the same policy.
+export const TRUSTED_ASSOCIATIONS = new Set([
+  "OWNER",
+  "MEMBER",
+  "COLLABORATOR",
+]);
 
 export function createIssueQueries(cfg: ResolvedConfig) {
   async function ghJson(args: string[]): Promise<string> {

@@ -26,6 +26,7 @@ step is re-runnable, because the truth is always re-read from:
 | Which issues are queued | open issues with the queue label, minus in-review |
 | Feature identity + fixed membership | a JSON marker in the feature PR body |
 | Which issues are done | in-review label / closed state |
+| Review feedback already handled | thread resolution state + a workflow-maintained state comment on the PR |
 | Integrated code | commits on the feature branch (pushed to origin) |
 | Per-issue work | commits on the issue branch |
 | Version already bumped? | a `chore(release):` commit on the feature branch |
@@ -69,7 +70,19 @@ The outer loop runs up to `maxIterations` times. Each iteration:
 3. **Reconcile** — any issue labelled in-review whose feature PR is no longer
    open (you closed it unmerged) has the label removed, so it re-enters the
    queue.
-4. **Keep ready PRs current** — for each **ready** (non-draft) feature PR: if
+4. **Address review feedback** — for each open feature PR (ready PRs by
+   default; drafts too with `feedback.includeDrafts`), unresolved review
+   threads and new change-requesting/commenting reviews from trusted authors
+   are handed to a **responder** agent in a sandbox on the feature branch. It
+   commits fixes (or declines an item with a stated reason), the branch is
+   pushed, every thread gets a reply (addressed → the thread is resolved), a
+   summary comment answers top-level reviews, and review is re-requested from
+   anyone whose latest review requested changes. Unresolving a thread or
+   replying to it re-queues that item; after `feedback.maxAttempts` failed
+   rounds on the same feedback the workflow posts a notice and waits for the
+   feedback to change. Feedback that invalidates the whole feature is still
+   best handled by closing the PR unmerged (see Reconcile).
+5. **Keep ready PRs current** — for each **ready** (non-draft) feature PR: if
    its version no longer exceeds the target branch's (a sibling merged and took
    that version) it is **re-bumped** (which also merges the target in); else if
    it is merely **behind** it is **refreshed** (merge the target in, no version

@@ -6,8 +6,11 @@
 // review and merge -- it never merges to the target branch itself.
 //
 //   Phase 0 (Check):   On the HOST, reconcile in-review issues whose PR was
-//                      closed unmerged, then fetch the open queued issues that
-//                      are not already parked behind a feature PR.
+//                      closed unmerged, address human review feedback on open
+//                      feature PRs (a responder agent fixes the branch, replies
+//                      to and resolves review threads, and re-requests review),
+//                      then fetch the open queued issues that are not already
+//                      parked behind a feature PR.
 //   Phase 1 (Plan):    A planner agent groups the open issues into features
 //                      (cohesive units that ship as one PR), respecting the
 //                      membership of features that already have an open PR, and
@@ -37,6 +40,7 @@ import {
   type Role,
 } from "./config.mjs";
 import { errMsg } from "./exec.mjs";
+import { createFeedbackOps } from "./feedback.mjs";
 import { createIssueQueries, type SandcastleIssue } from "./issues.mjs";
 import {
   createRepoOps,
@@ -82,6 +86,7 @@ export async function runFeatureFlow(
 ): Promise<FeatureFlowResult> {
   const cfg: ResolvedConfig = resolveConfig(userConfig);
   const ops = createRepoOps(cfg);
+  const fb = createFeedbackOps(cfg);
   const { checkTasks, getInReviewIssueNumbers } = createIssueQueries(cfg);
 
   // The agent provider (model + effort) for a given role.
@@ -460,6 +465,181 @@ export async function runFeatureFlow(
     }
   }
 
+  // Address human review feedback on an open feature PR: run the responder
+  // agent on the feature branch against the pending items (unresolved trusted
+  // review threads + new review submissions), push whatever it commits, then
+  // write the outcome back to GitHub -- a reply per thread (resolved when
+  // addressed), a summary comment for top-level reviews, an updated state
+  // comment, and a re-request to reviewers who asked for changes.
+  //
+  // Idempotence lives on the PR itself: resolved threads and the state
+  // comment's cursor drop handled items from the next round's pending set, and
+  // an attempts counter (reset whenever the pending set changes) stops a
+  // persistently failing round from retrying forever.
+  async function respondToFeedback(fp: FeaturePR): Promise<void> {
+    const pending = await fb.getPendingFeedback(fp.prNumber);
+    if (!pending) return;
+
+    if (pending.attempts >= cfg.feedbackMaxAttempts) {
+      if (!pending.notified) {
+        console.warn(
+          `  ⚠ feature ${fp.slug}: feedback on PR #${fp.prNumber} still unhandled after ${pending.attempts} attempt(s); giving up until it changes.`,
+        );
+        await fb.postComment(
+          fp.prNumber,
+          `⚠️ Sandcastle could not fully address the current review feedback after ${pending.attempts} attempt(s). It will retry when the feedback changes (a new reply, a re-opened thread, or a new review).`,
+        );
+        await fb.writeState(
+          fp.prNumber,
+          pending.stateCommentId,
+          {
+            cursor: pending.cursor,
+            attempts: pending.attempts,
+            sig: pending.sig,
+            notified: true,
+          },
+          `Gave up after ${pending.attempts} attempt(s); waiting for the feedback to change.`,
+        );
+      }
+      return;
+    }
+
+    console.log(
+      `  · feature ${fp.slug}: ${pending.items.length} review feedback item(s) pending on PR #${fp.prNumber}.`,
+    );
+
+    const headBefore = await ops.branchHead(fp.branch);
+
+    let stdout: string;
+    try {
+      stdout = await withFeatureSandbox(fp.branch, async (sandbox) => {
+        const res = await sandbox.run({
+          name: `responder:${fp.slug}`,
+          // Feedback fixes are implementer-class work, so the responder
+          // shares the implementer's iteration cap.
+          maxIterations: cfg.implementerMaxIterations,
+          agent: agentFor("responder"),
+          promptFile: promptPath(cfg, "respond-prompt.md"),
+          completionSignal: "</responses>",
+          promptArgs: {
+            FEEDBACK: fb.renderFeedback(pending.items),
+            VERIFY_COMMAND: cfg.verifyCommand,
+            IMPLEMENT_NOTES: cfg.implementNotes,
+          },
+        });
+        return res.stdout;
+      });
+    } catch (err) {
+      console.error(
+        `  ⚠ responder failed on ${fp.branch}: ${errMsg(err)}. Keeping committed work.`,
+      );
+      // Push whatever landed (a reviewer failure must never discard committed
+      // work), then record the failed attempt so a broken round cannot retry
+      // forever.
+      const headAfterFail = await ops.branchHead(fp.branch);
+      if (headAfterFail && headAfterFail !== headBefore) {
+        await ops.pushBranch(fp.branch);
+      }
+      await fb.writeState(
+        fp.prNumber,
+        pending.stateCommentId,
+        {
+          cursor: pending.cursor,
+          attempts: pending.attempts + 1,
+          sig: pending.sig,
+          notified: false,
+        },
+        `Responder run failed (attempt ${pending.attempts + 1} of ${cfg.feedbackMaxAttempts}).`,
+      );
+      return;
+    }
+
+    const responses = fb.parseResponses(stdout);
+
+    const headAfter = await ops.branchHead(fp.branch);
+    const pushed = headAfter !== null && headAfter !== headBefore;
+    if (pushed) await ops.pushBranch(fp.branch);
+    const shortSha = pushed ? headAfter.slice(0, 7) : null;
+
+    // Write each verdict back. Thread replies/resolutions are per-item and
+    // best-effort (an unreplied thread simply stays pending); review verdicts
+    // are batched into one summary comment.
+    const reviewSummaries: string[] = [];
+    let addressed = 0;
+    let unhandled = 0;
+    for (const item of pending.items) {
+      const verdict = responses.get(item.key);
+      if (!verdict) {
+        unhandled++;
+        continue;
+      }
+      if (verdict.action === "addressed") addressed++;
+      if (item.kind === "thread") {
+        const reply =
+          verdict.action === "addressed"
+            ? `Addressed${shortSha ? ` in ${shortSha}` : ""}: ${verdict.note}`
+            : `Sandcastle declined this item: ${verdict.note}\n\nReply here to push back -- a new reply re-queues it.`;
+        try {
+          await fb.replyToThread(fp.prNumber, item, reply);
+          if (verdict.action === "addressed") {
+            await fb.resolveThread(item.threadId);
+          }
+        } catch (err) {
+          console.warn(
+            `  ⚠ could not write back to thread ${item.key} on PR #${fp.prNumber}: ${errMsg(err)}`,
+          );
+        }
+      } else {
+        reviewSummaries.push(
+          `- **${item.key}** (review by @${item.author}): ${verdict.action} -- ${verdict.note}`,
+        );
+      }
+    }
+
+    if (reviewSummaries.length > 0) {
+      try {
+        await fb.postComment(
+          fp.prNumber,
+          `Sandcastle responded to review feedback${shortSha ? ` (${shortSha})` : ""}:\n\n${reviewSummaries.join("\n")}`,
+        );
+      } catch (err) {
+        console.warn(
+          `  ⚠ could not post feedback summary on PR #${fp.prNumber}: ${errMsg(err)}`,
+        );
+      }
+    }
+
+    // Advance the review cursor only when every pending review got a verdict;
+    // otherwise leave it so the missed ones stay pending. Unanswered items
+    // count as a failed attempt (against the OLD sig -- if the set shrinks
+    // next round, the sig changes and attempts reset).
+    const reviewsAllHandled = pending.items
+      .filter((i) => i.kind === "review")
+      .every((i) => responses.has(i.key));
+    await fb.writeState(
+      fp.prNumber,
+      pending.stateCommentId,
+      {
+        cursor:
+          reviewsAllHandled && pending.newestReviewAt
+            ? pending.newestReviewAt
+            : pending.cursor,
+        attempts: unhandled > 0 ? pending.attempts + 1 : 0,
+        sig: pending.sig,
+        notified: false,
+      },
+      `Last round: ${addressed} addressed, ${responses.size - addressed} declined, ${unhandled} unanswered${shortSha ? ` (pushed ${shortSha})` : ""}.`,
+    );
+
+    if (pushed && addressed > 0 && pending.changesRequestedBy.length > 0) {
+      await fb.reRequestReviewers(fp.prNumber, pending.changesRequestedBy);
+    }
+
+    console.log(
+      `  ✔ feature ${fp.slug}: feedback round on PR #${fp.prNumber} done (${addressed} addressed, ${responses.size - addressed} declined, ${unhandled} unanswered).`,
+    );
+  }
+
   // Refresh a ready feature PR whose version collided with the target branch:
   // merge the latest target branch into its branch and re-apply the bump (one
   // level above the new base), so the PR lands a fresh version. The PR stays
@@ -605,15 +785,32 @@ export async function runFeatureFlow(
       }
     }
 
-    // Keep ready feature PRs current with the target branch (independent per
-    // feature, so one never blocks another):
-    //   - version collision (a sibling merged and took the version) -> re-bump
-    //     (which also merges the target branch in);
-    //   - otherwise merely behind -> merge the target branch in, no version
-    //     change.
-    // Drafts are left alone: they refresh naturally as their issues integrate.
-    const refreshes = await Promise.allSettled(
+    // Maintain each open feature PR (independent per feature, so one never
+    // blocks another). In order, per PR:
+    //   1. Address human review feedback (responder agent) -- BEFORE any
+    //      target-branch churn, so the reviewer's requested changes land
+    //      first. Runs on ready PRs (and drafts when feedback.includeDrafts).
+    //      This step precedes the idle exit below on purpose: once everything
+    //      is parked in review, feedback is usually the only work left.
+    //   2. Keep the branch current with the target: version collision (a
+    //      sibling merged and took the version) -> re-bump (which also merges
+    //      the target in); otherwise merely behind -> refresh (merge the
+    //      target in, no version change). Drafts are left alone: they refresh
+    //      naturally as their issues integrate.
+    const maintained = await Promise.allSettled(
       featurePRs.map(async (fp) => {
+        if (
+          cfg.feedbackEnabled &&
+          (!fp.isDraft || cfg.feedbackIncludeDrafts)
+        ) {
+          try {
+            await respondToFeedback(fp);
+          } catch (err) {
+            console.error(
+              `  ⚠ feedback handling failed for ${fp.slug}: ${errMsg(err)}. Will retry next cycle.`,
+            );
+          }
+        }
         if (await ops.needsRebump(fp.branch)) {
           await rebumpFeature(fp);
         } else if (
@@ -624,9 +821,11 @@ export async function runFeatureFlow(
         }
       }),
     );
-    for (const [i, outcome] of refreshes.entries()) {
+    for (const [i, outcome] of maintained.entries()) {
       if (outcome.status === "rejected") {
-        console.error(`  ✗ refresh ${featurePRs[i]!.slug} failed: ${outcome.reason}`);
+        console.error(
+          `  ✗ maintenance for ${featurePRs[i]!.slug} failed: ${outcome.reason}`,
+        );
       }
     }
 

@@ -248,6 +248,13 @@ export function createRepoOps(cfg: ResolvedConfig) {
     }
   }
 
+  // The commit sha at the tip of a local branch, or null if the ref is
+  // missing. Used to detect whether an agent run actually committed anything.
+  async function branchHead(branch: string): Promise<string | null> {
+    const res = await git(["rev-parse", "--verify", `refs/heads/${branch}`]);
+    return res.code === 0 ? res.stdout.trim() : null;
+  }
+
   // Whether a local branch ref exists.
   async function branchExists(branch: string): Promise<boolean> {
     const res = await git([
@@ -572,6 +579,7 @@ export function createRepoOps(cfg: ResolvedConfig) {
     lockIssue,
     ensureFeatureBranch,
     pushBranch,
+    branchHead,
     branchExists,
     removeLeakedWorktree,
     commitsAhead,

@@ -13,3 +13,10 @@ export {
 } from "./config.mjs";
 export type { FeatureMember, FeaturePR } from "./repo-ops.mjs";
 export type { IssueComment, SandcastleIssue } from "./issues.mjs";
+export type {
+  FeedbackItem,
+  FeedbackReview,
+  FeedbackThread,
+  PendingFeedback,
+  ThreadComment,
+} from "./feedback.mjs";

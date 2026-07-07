@@ -17,6 +17,7 @@ export type PromptName =
   | "plan-prompt.md"
   | "implement-prompt.md"
   | "review-prompt.md"
+  | "respond-prompt.md"
   | "merge-prompt.md"
   | "release-prompt.md"
   | "rebump-prompt.md"

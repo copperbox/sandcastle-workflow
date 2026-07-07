@@ -20,10 +20,18 @@ export default defineConfig({
   // implementNotes: "",
 
   // Hardening for public repos. trustedCommentsOnly (default true) drops issue
-  // comments from non-OWNER/MEMBER/COLLABORATOR authors before any prompt is
-  // built. lockOnQueue (default false) locks each queued issue's conversation
-  // to collaborators the first time the workflow picks it up.
+  // comments AND PR review feedback from non-OWNER/MEMBER/COLLABORATOR authors
+  // before any prompt is built. lockOnQueue (default false) locks each queued
+  // issue's conversation to collaborators the first time the workflow picks it
+  // up.
   // security: { lockOnQueue: true, trustedCommentsOnly: true },
+
+  // Review-feedback handling: each cycle, unresolved review threads and new
+  // reviews on open feature PRs are addressed on the branch by a responder
+  // agent (replies, resolves what it fixed, re-requests review). maxAttempts
+  // caps retries per unchanged feedback set; includeDrafts extends the
+  // behavior to draft PRs.
+  // feedback: { enabled: true, maxAttempts: 2, includeDrafts: false },
 
   // Pathspecs excluded from the diff the reviewer sees (generated artifacts).
   // review: { diffExcludes: ["generated-dir/**"] },
@@ -35,7 +43,7 @@ export default defineConfig({
   // branchPrefix: { feature: "sandcastle/feature-", issue: "sandcastle/issue-" },
 
   // Per-role model + reasoning-effort overrides (planner, implementer,
-  // reviewer, merger, refresh, rebump, release).
+  // reviewer, responder, merger, refresh, rebump, release).
   // agents: { implementer: { model: "claude-fable-5", effort: "high" } },
 
   // Plan -> deliver cycles per invocation, and the implementer's per-issue cap.

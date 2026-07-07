@@ -16,6 +16,10 @@ itself.
   member issue lands.
 - Ready PRs are kept current with your target branch automatically (merge
   refreshes, version-collision re-bumps).
+- **Human review feedback is addressed automatically**: unresolved review
+  threads and change-requesting reviews on a feature PR are picked up each
+  cycle by a responder agent that fixes the branch, replies to every thread
+  (resolving the ones it addressed), and re-requests your review.
 - **All durable state lives in git + GitHub** — no local state files; a killed
   process recovers by re-deriving everything on the next run.
 
@@ -71,6 +75,13 @@ npm run sandcastle:loop   # keep watching for newly labelled issues
 Review and merge the PRs it opens; `Closes #…` lines auto-close the issues.
 Close a PR unmerged and its issues automatically re-enter the queue.
 
+Leave inline review comments or a "request changes" review on a feature PR and
+the next cycle addresses them: the responder agent updates the branch, replies
+to each thread (resolving the ones it addressed, with a stated reason for any
+it declines), and re-requests your review. Unresolve a thread or reply to it
+to send an item back. Feedback that invalidates the whole feature is still
+best handled by closing the PR unmerged, which requeues its issues.
+
 ## Configuration
 
 Everything is optional; defaults in parentheses. See `FeatureFlowConfig` for
@@ -82,13 +93,16 @@ the full typed reference.
 | `targetBranch` | Base branch for features and PRs (`main`) |
 | `labels.queue` / `labels.inReview` | Queue label (`Sandcastle`) / parked label (`sandcastle:in-review`) |
 | `branchPrefix.feature` / `.issue` | Branch naming (`sandcastle/feature-`, `sandcastle/issue-`) |
-| `agents.<role>` | Per-role `{ model, effort }` for planner, implementer, reviewer, merger, refresh, rebump, release |
+| `agents.<role>` | Per-role `{ model, effort }` for planner, implementer, reviewer, responder, merger, refresh, rebump, release |
 | `maxIterations` | Plan → deliver cycles per invocation (`10`) |
 | `implementerMaxIterations` | Implementer iteration cap per issue (`100`) |
 | `copyToWorktree` / `hooks` | Sandbox bootstrapping (`["node_modules"]` / `npm install`) |
 | `sandbox` | Sandbox provider factory (`docker()`) |
 | `release.enabled` | Semver-bump the root package.json per feature PR (`true`; set `false` for non-npm repos) |
 | `review.diffExcludes` | Pathspecs hidden from the reviewer's diff (generated artifacts) |
+| `feedback.enabled` | Address human PR review feedback each cycle (`true`) |
+| `feedback.maxAttempts` | Failed responder rounds per unchanged feedback set before giving up until it changes (`2`) |
+| `feedback.includeDrafts` | Also respond to review feedback on draft feature PRs (`false`) |
 | `implementNotes` | Extra repo-specific guidance injected into the implementer prompt |
 | `prompts.dir` | Prompt-override directory (`./.sandcastle/prompts`) |
 | `security.trustedCommentsOnly` | Drop issue comments from non-OWNER/MEMBER/COLLABORATOR authors before building prompts (`true`) |
@@ -106,7 +120,10 @@ built in:
   who aren't `OWNER`/`MEMBER`/`COLLABORATOR` are dropped in `checkTasks`,
   before any prompt is built. The implementer receives the issue body and the
   surviving comments **inline** (it is instructed not to re-fetch the issue),
-  so the filter is enforced by the module, not by agent behavior.
+  so the filter is enforced by the module, not by agent behavior. The same
+  policy governs PR review feedback: review threads and reviews from untrusted
+  authors never reach the responder agent (locking cannot help here — a locked
+  PR would lock your reviewers out too).
 - **`security.lockOnQueue`** (default off, recommended for public repos): each
   queued issue's conversation is locked (collaborators-only) the first time
   the workflow picks it up, closing the channel entirely going forward.
@@ -115,9 +132,10 @@ Your manual review of the PRs the workflow opens remains the final gate.
 
 ### Prompt overrides
 
-The seven role prompts (`plan-prompt.md`, `implement-prompt.md`,
-`review-prompt.md`, `merge-prompt.md`, `release-prompt.md`, `rebump-prompt.md`,
-`refresh-prompt.md`) ship with this package. To customize one, copy it from
+The eight role prompts (`plan-prompt.md`, `implement-prompt.md`,
+`review-prompt.md`, `respond-prompt.md`, `merge-prompt.md`,
+`release-prompt.md`, `rebump-prompt.md`, `refresh-prompt.md`) ship with this
+package. To customize one, copy it from
 `node_modules/@copperbox/sandcastle-workflow/prompts/` into
 `.sandcastle/prompts/` and edit — same filename wins.
 

@@ -21,6 +21,7 @@ export type Role =
   | "planner"
   | "implementer"
   | "reviewer"
+  | "responder"
   | "merger"
   | "refresh"
   | "rebump"
@@ -64,7 +65,9 @@ export interface FeatureFlowConfig {
   // Maximum plan -> deliver cycles per invocation. Default: 10.
   maxIterations?: number;
 
-  // Iteration cap for the implementer agent on a single issue. Default: 100.
+  // Iteration cap for the implementer agent on a single issue. The responder
+  // agent (feedback fixes are implementer-class work) shares this cap.
+  // Default: 100.
   implementerMaxIterations?: number;
 
   // Paths copied from the host into each worktree before its sandbox starts.
@@ -103,6 +106,22 @@ export interface FeatureFlowConfig {
   // {{IMPLEMENT_NOTES}} (e.g. how to verify UI changes). Default: "".
   implementNotes?: string;
 
+  feedback?: {
+    // When true (default), each cycle reads human review feedback on open
+    // feature PRs -- unresolved review threads and change-requesting or
+    // commenting reviews -- and dispatches a responder agent on the feature
+    // branch to address it: fix commits are pushed, each thread gets a reply
+    // (resolved when addressed), and review is re-requested.
+    enabled?: boolean;
+    // Failed/incomplete responder rounds tolerated for one unchanged set of
+    // feedback before the workflow posts a notice and waits for the feedback
+    // to change (a new reply, an unresolved thread, a new review). Default: 2.
+    maxAttempts?: number;
+    // Also respond to review feedback on DRAFT feature PRs. Default: false
+    // (drafts are still being assembled; feedback there is usually premature).
+    includeDrafts?: boolean;
+  };
+
   security?: {
     // Lock each queued issue's conversation the first time the workflow picks
     // it up, so only collaborators can comment afterwards. Closes the
@@ -134,18 +153,23 @@ export interface ResolvedConfig {
   promptsDir: string | null;
   reviewDiffExcludes: string[];
   implementNotes: string;
+  feedbackEnabled: boolean;
+  feedbackMaxAttempts: number;
+  feedbackIncludeDrafts: boolean;
   lockOnQueue: boolean;
   trustedCommentsOnly: boolean;
 }
 
-// Fable 5 writes and reviews the code; Opus 4.8 handles the reasoning-heavy
-// planning and the conflict-resolving merges; Sonnet 5 (cheaper) handles the
-// packaging steps. Effort is capped at "high" (never xhigh/max) for cost, and
-// dropped to medium/low on the simpler steps.
+// Fable 5 writes and reviews the code (the responder is implementer-class:
+// it turns human review feedback into code changes); Opus 4.8 handles the
+// reasoning-heavy planning and the conflict-resolving merges; Sonnet 5
+// (cheaper) handles the packaging steps. Effort is capped at "high" (never
+// xhigh/max) for cost, and dropped to medium/low on the simpler steps.
 const DEFAULT_AGENTS: Record<Role, AgentSpec> = {
   planner: { model: "claude-opus-4-8", effort: "high" },
   implementer: { model: "claude-fable-5", effort: "high" },
   reviewer: { model: "claude-fable-5", effort: "medium" },
+  responder: { model: "claude-fable-5", effort: "high" },
   merger: { model: "claude-opus-4-8", effort: "medium" },
   refresh: { model: "claude-opus-4-8", effort: "medium" },
   rebump: { model: "claude-sonnet-5", effort: "medium" },
@@ -173,6 +197,9 @@ export function resolveConfig(user: FeatureFlowConfig = {}): ResolvedConfig {
       user.prompts?.dir === undefined ? "./.sandcastle/prompts" : user.prompts.dir,
     reviewDiffExcludes: user.review?.diffExcludes ?? [],
     implementNotes: user.implementNotes ?? "",
+    feedbackEnabled: user.feedback?.enabled ?? true,
+    feedbackMaxAttempts: user.feedback?.maxAttempts ?? 2,
+    feedbackIncludeDrafts: user.feedback?.includeDrafts ?? false,
     lockOnQueue: user.security?.lockOnQueue ?? false,
     trustedCommentsOnly: user.security?.trustedCommentsOnly ?? true,
   };
