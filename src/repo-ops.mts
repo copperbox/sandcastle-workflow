@@ -155,51 +155,70 @@ export function createRepoOps(cfg: ResolvedConfig) {
   // Labels
   // -------------------------------------------------------------------------
 
-  // Create the in-review label if it does not already exist. Idempotent: gh
-  // exits non-zero when the label exists, which we treat as success.
-  async function ensureInReviewLabel(): Promise<void> {
+  // Create a label if it does not already exist. Idempotent: gh exits
+  // non-zero when the label exists, which we treat as success.
+  async function ensureLabel(
+    name: string,
+    color: string,
+    description: string,
+  ): Promise<void> {
     const res = await gh([
       "label",
       "create",
-      cfg.inReviewLabel,
+      name,
       "--color",
-      "BFD4F2",
+      color,
       "--description",
-      "Sandcastle work is complete and waiting in a feature PR for human review",
+      description,
     ]);
     if (res.code !== 0 && !/already exists/i.test(res.stderr)) {
+      throw new Error(`failed to ensure label ${name}: ${res.stderr.trim()}`);
+    }
+  }
+
+  async function editIssueLabel(
+    issueId: string | number,
+    flag: "--add-label" | "--remove-label",
+    label: string,
+  ): Promise<void> {
+    const res = await gh(["issue", "edit", String(issueId), flag, label]);
+    if (res.code !== 0) {
       throw new Error(
-        `failed to ensure label ${cfg.inReviewLabel}: ${res.stderr.trim()}`,
+        `failed to ${flag === "--add-label" ? "label" : "unlabel"} issue #${issueId} (${label}): ${res.stderr.trim()}`,
       );
     }
+  }
+
+  async function ensureInReviewLabel(): Promise<void> {
+    await ensureLabel(
+      cfg.inReviewLabel,
+      "BFD4F2",
+      "Sandcastle work is complete and waiting in a feature PR for human review",
+    );
+  }
+
+  async function ensureInProgressLabel(): Promise<void> {
+    await ensureLabel(
+      cfg.inProgressLabel,
+      "FBCA04",
+      "Sandcastle is actively working on this issue right now",
+    );
   }
 
   async function addInReview(issueId: string | number): Promise<void> {
-    const res = await gh([
-      "issue",
-      "edit",
-      String(issueId),
-      "--add-label",
-      cfg.inReviewLabel,
-    ]);
-    if (res.code !== 0) {
-      throw new Error(
-        `failed to label issue #${issueId} in-review: ${res.stderr.trim()}`,
-      );
-    }
+    await editIssueLabel(issueId, "--add-label", cfg.inReviewLabel);
   }
 
   async function removeInReview(issueId: string | number): Promise<void> {
-    const res = await gh([
-      "issue",
-      "edit",
-      String(issueId),
-      "--remove-label",
-      cfg.inReviewLabel,
-    ]);
-    if (res.code !== 0) {
-      throw new Error(`failed to unlabel issue #${issueId}: ${res.stderr.trim()}`);
-    }
+    await editIssueLabel(issueId, "--remove-label", cfg.inReviewLabel);
+  }
+
+  async function addInProgress(issueId: string | number): Promise<void> {
+    await editIssueLabel(issueId, "--add-label", cfg.inProgressLabel);
+  }
+
+  async function removeInProgress(issueId: string | number): Promise<void> {
+    await editIssueLabel(issueId, "--remove-label", cfg.inProgressLabel);
   }
 
   // Lock an issue's conversation so only collaborators can comment. Used by
@@ -574,8 +593,11 @@ export function createRepoOps(cfg: ResolvedConfig) {
     issueBranch,
     buildFeatureBody,
     ensureInReviewLabel,
+    ensureInProgressLabel,
     addInReview,
     removeInReview,
+    addInProgress,
+    removeInProgress,
     lockIssue,
     ensureFeatureBranch,
     pushBranch,

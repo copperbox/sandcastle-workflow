@@ -66,10 +66,11 @@ The outer loop runs up to `maxIterations` times. Each iteration:
 1. Fast-forward the local target branch to origin so every downstream
    computation reflects what is actually merged (a diverged/ahead local target
    is left untouched with a warning).
-2. Create the in-review label if missing.
+2. Create the in-review and in-progress labels if missing.
 3. **Reconcile** — any issue labelled in-review whose feature PR is no longer
    open (you closed it unmerged) has the label removed, so it re-enters the
-   queue.
+   queue. Any leftover in-progress label (a previous run crashed mid-round) is
+   cleared.
 4. **Address review feedback** — for each open feature PR (ready PRs by
    default; drafts too with `feedback.includeDrafts`), unresolved review
    threads and new change-requesting/commenting reviews from trusted authors
@@ -108,7 +109,10 @@ workable, exit **3**.
 For each feature, independently:
 1. Ensure the feature branch exists (cut off the target branch).
 2. Implement + review each **workable, not-yet-done** issue concurrently, each
-   in its own sandbox cut off the feature branch.
+   in its own sandbox cut off the feature branch. Each such issue carries the
+   **in-progress** label while the feature's round runs — purely informational
+   (it never gates a decision), lifted when the round ends whatever the
+   outcome.
 3. **Integrate** — merge the issue branches that carry new work onto the feature
    branch (resolve conflicts, run the verify command), then push.
 4. **Finalize**:
@@ -177,6 +181,8 @@ uses git integration state (not just labels). So:
   marking ready is a no-op.
 - Bump agent fails on the final round → the PR stays a draft, **no labels are
   applied**, and the feature retries next cycle.
+- Killed mid-round → any in-progress labels left behind are harmless (they
+  never gate a decision) and are cleared at the next run's Phase 0.
 
 **Leaked worktrees:** Sandcastle *preserves* a worktree when a run leaves
 uncommitted changes or is killed, and a leftover worktree blocks re-creating a
@@ -226,4 +232,4 @@ the package to pick up fixes.
 - Run the loop from a **clean checkout of the target branch**. It is
   fast-forwarded from origin each cycle; unpushed local commits on it are
   warned about and left alone.
-- The in-review label is created automatically on first run.
+- The in-review and in-progress labels are created automatically on first run.

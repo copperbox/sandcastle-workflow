@@ -91,7 +91,7 @@ the full typed reference.
 |---|---|
 | `verifyCommand` | What agents run to verify work (`npm run typecheck && npm run test`) |
 | `targetBranch` | Base branch for features and PRs (`main`) |
-| `labels.queue` / `labels.inReview` | Queue label (`Sandcastle`) / parked label (`sandcastle:in-review`) |
+| `labels.queue` / `labels.inReview` / `labels.inProgress` | Queue label (`Sandcastle`) / parked label (`sandcastle:in-review`) / actively-being-worked label (`sandcastle:in-progress`) |
 | `branchPrefix.feature` / `.issue` | Branch naming (`sandcastle/feature-`, `sandcastle/issue-`) |
 | `agents.<role>` | Per-role `{ model, effort }` for planner, implementer, reviewer, responder, merger, refresh, rebump, release |
 | `maxIterations` | Plan → deliver cycles per invocation (`10`) |

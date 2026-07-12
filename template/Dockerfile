@@ -49,6 +49,18 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 # Add Claude to PATH
 ENV PATH="/home/agent/.local/bin:$PATH"
 
+# rtk (https://github.com/rtk-ai/rtk): token-optimized CLI proxy for the agent.
+# Telemetry is opt-in; the init consent prompt is skipped on non-TTY stdin, and
+# this env var hard-disables collection regardless of config.
+ENV RTK_TELEMETRY_DISABLED=1
+
+# `rtk init -g --auto-patch` is the non-interactive path: it patches
+# ~/.claude/settings.json (hook that rewrites commands through rtk), writes
+# ~/.claude/RTK.md, and adds an @RTK.md reference to ~/.claude/CLAUDE.md.
+RUN curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh \
+  && mkdir -p /home/agent/.claude \
+  && rtk init -g --auto-patch
+
 WORKDIR /home/agent
 
 # In worktree sandbox mode, Sandcastle bind-mounts the git worktree at
