@@ -49,7 +49,10 @@ jobs:
           node -e "
             const { execFileSync } = require('child_process');
             const out = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-            const files = JSON.parse(out)[0].files.map((f) => f.path);
+            // npm <=11 emits an array; npm >=12 emits an object keyed by package name
+            const parsed = JSON.parse(out);
+            const info = Array.isArray(parsed) ? parsed[0] : Object.values(parsed)[0];
+            const files = info.files.map((f) => f.path);
             const allowed = (p) => p === 'package.json' || p === 'README.md' || p === 'LICENSE' || p.startsWith('dist/') || p.startsWith('prompts/') || p.startsWith('template/');
             const unexpected = files.filter((p) => !allowed(p));
             if (unexpected.length > 0) {
