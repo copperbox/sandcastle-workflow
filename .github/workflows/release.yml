@@ -41,8 +41,8 @@ jobs:
 
       - name: Verify CLI shebang and executable bit
         run: |
-          head -n 1 dist/cli.js | grep -qx '#!/usr/bin/env node'
-          test -x dist/cli.js
+          head -n 1 dist/init.mjs | grep -qx '#!/usr/bin/env node'
+          test -x dist/init.mjs
 
       - name: Verify pack contents
         run: |
@@ -50,14 +50,14 @@ jobs:
             const { execFileSync } = require('child_process');
             const out = execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
             const files = JSON.parse(out)[0].files.map((f) => f.path);
-            const allowed = (p) => p === 'package.json' || p === 'README.md' || p === 'LICENSE' || p.startsWith('dist/');
+            const allowed = (p) => p === 'package.json' || p === 'README.md' || p === 'LICENSE' || p.startsWith('dist/') || p.startsWith('prompts/') || p.startsWith('template/');
             const unexpected = files.filter((p) => !allowed(p));
             if (unexpected.length > 0) {
               console.error('Unexpected files in npm pack:', unexpected);
               process.exit(1);
             }
-            if (!files.includes('dist/cli.js')) {
-              console.error('dist/cli.js missing from npm pack');
+            if (!files.includes('dist/init.mjs')) {
+              console.error('dist/init.mjs missing from npm pack');
               process.exit(1);
             }
             console.log('Pack contents OK (' + files.length + ' files)');
