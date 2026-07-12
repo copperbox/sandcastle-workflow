@@ -50,6 +50,11 @@ export interface FeatureFlowConfig {
     // Label applied once an issue's work is parked behind a feature PR.
     // Default: "sandcastle:in-review".
     inReview?: string;
+    // Label applied while a delivery round is actively working an issue,
+    // removed when the round ends (whether the issue moved to in-review or
+    // failed and requeued). Purely informational -- it never gates any
+    // workflow decision. Default: "sandcastle:in-progress".
+    inProgress?: string;
   };
 
   branchPrefix?: {
@@ -141,6 +146,7 @@ export interface ResolvedConfig {
   verifyCommand: string;
   queueLabel: string;
   inReviewLabel: string;
+  inProgressLabel: string;
   featureBranchPrefix: string;
   issueBranchPrefix: string;
   agents: Record<Role, AgentSpec>;
@@ -182,6 +188,7 @@ export function resolveConfig(user: FeatureFlowConfig = {}): ResolvedConfig {
     verifyCommand: user.verifyCommand ?? "npm run typecheck && npm run test",
     queueLabel: user.labels?.queue ?? "Sandcastle",
     inReviewLabel: user.labels?.inReview ?? "sandcastle:in-review",
+    inProgressLabel: user.labels?.inProgress ?? "sandcastle:in-progress",
     featureBranchPrefix: user.branchPrefix?.feature ?? "sandcastle/feature-",
     issueBranchPrefix: user.branchPrefix?.issue ?? "sandcastle/issue-",
     agents: { ...DEFAULT_AGENTS, ...user.agents },

@@ -96,16 +96,14 @@ export function createIssueQueries(cfg: ResolvedConfig) {
     });
   }
 
-  // The open issue numbers currently labelled in-review. Used to detect issues
-  // whose feature PR was closed unmerged (they must be requeued).
-  async function getInReviewIssueNumbers(): Promise<number[]> {
+  async function issueNumbersWithLabel(label: string): Promise<number[]> {
     const stdout = await ghJson([
       "issue",
       "list",
       "--state",
       "open",
       "--label",
-      cfg.inReviewLabel,
+      label,
       "--limit",
       "100",
       "--json",
@@ -117,5 +115,18 @@ export function createIssueQueries(cfg: ResolvedConfig) {
     return JSON.parse(stdout) as number[];
   }
 
-  return { checkTasks, getInReviewIssueNumbers };
+  // The open issue numbers currently labelled in-review. Used to detect issues
+  // whose feature PR was closed unmerged (they must be requeued).
+  async function getInReviewIssueNumbers(): Promise<number[]> {
+    return issueNumbersWithLabel(cfg.inReviewLabel);
+  }
+
+  // The open issue numbers currently labelled in-progress. Nothing is being
+  // worked at the start of an iteration, so any hit is a leftover from a
+  // crashed run and must be cleared.
+  async function getInProgressIssueNumbers(): Promise<number[]> {
+    return issueNumbersWithLabel(cfg.inProgressLabel);
+  }
+
+  return { checkTasks, getInReviewIssueNumbers, getInProgressIssueNumbers };
 }

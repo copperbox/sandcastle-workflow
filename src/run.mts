@@ -87,7 +87,8 @@ export async function runFeatureFlow(
   const cfg: ResolvedConfig = resolveConfig(userConfig);
   const ops = createRepoOps(cfg);
   const fb = createFeedbackOps(cfg);
-  const { checkTasks, getInReviewIssueNumbers } = createIssueQueries(cfg);
+  const { checkTasks, getInReviewIssueNumbers, getInProgressIssueNumbers } =
+    createIssueQueries(cfg);
 
   // The agent provider (model + effort) for a given role.
   function agentFor(role: Role): sandcastle.AgentProvider {
@@ -368,6 +369,37 @@ export async function runFeatureFlow(
   }
 
   // Run one feature's full pipeline. Independent of every other feature.
+  // The in-progress label is purely informational (it never gates a workflow
+  // decision -- the queue and done sets come from the queue/in-review labels
+  // and git state), so a GitHub hiccup here must never stop the run.
+  async function markInProgress(issues: PlanIssue[]): Promise<void> {
+    await Promise.all(
+      issues.map(async (issue) => {
+        try {
+          await ops.addInProgress(issue.id);
+        } catch (err) {
+          console.warn(
+            `  ⚠ could not label issue #${issue.id} in-progress: ${errMsg(err)}`,
+          );
+        }
+      }),
+    );
+  }
+
+  async function clearInProgress(issues: PlanIssue[]): Promise<void> {
+    await Promise.all(
+      issues.map(async (issue) => {
+        try {
+          await ops.removeInProgress(issue.id);
+        } catch (err) {
+          console.warn(
+            `  ⚠ could not remove in-progress label from issue #${issue.id}: ${errMsg(err)}`,
+          );
+        }
+      }),
+    );
+  }
+
   async function runFeature(
     feature: PlanFeature,
     existing: FeaturePR | undefined,
@@ -390,78 +422,86 @@ export async function runFeatureFlow(
       (i) => i.workNow && !doneAtStart.has(String(i.id)),
     );
 
-    if (workable.length > 0) {
-      const settled = await Promise.allSettled(
-        workable.map((issue) =>
-          implementAndReview(feature, issue, issueByNumber.get(String(issue.id))),
-        ),
-      );
-      for (const [i, outcome] of settled.entries()) {
-        if (outcome.status === "rejected") {
-          console.error(
-            `  ✗ ${workable[i]!.id} (${ops.issueBranch(workable[i]!.id)}) failed: ${outcome.reason}`,
-          );
+    // Mark the issues this round is about to work so watchers can tell them
+    // apart from merely queued ones; always lift the mark when the round ends
+    // (in-review, integrated, or failed-and-requeued alike).
+    await markInProgress(workable);
+    try {
+      if (workable.length > 0) {
+        const settled = await Promise.allSettled(
+          workable.map((issue) =>
+            implementAndReview(feature, issue, issueByNumber.get(String(issue.id))),
+          ),
+        );
+        for (const [i, outcome] of settled.entries()) {
+          if (outcome.status === "rejected") {
+            console.error(
+              `  ✗ ${workable[i]!.id} (${ops.issueBranch(workable[i]!.id)}) failed: ${outcome.reason}`,
+            );
+          }
         }
       }
-    }
 
-    // Integrate: which workable issue branches carry real work not yet on the
-    // feature branch? (git state, not "did this run commit", is the truth.)
-    const toMerge: PlanIssue[] = [];
-    for (const issue of workable) {
-      const branch = ops.issueBranch(issue.id);
-      if ((await ops.commitsAhead(cfg.targetBranch, branch)) === 0) continue; // missing or no work
-      if ((await ops.commitsAhead(feature.branch, branch)) > 0) toMerge.push(issue);
-    }
-
-    if (toMerge.length > 0) {
-      await withFeatureSandbox(feature.branch, async (sandbox) => {
-        await sandbox.run({
-          name: `merger:${feature.slug}`,
-          maxIterations: 1,
-          agent: agentFor("merger"),
-          promptFile: promptPath(cfg, "merge-prompt.md"),
-          promptArgs: {
-            FEATURE_BRANCH: feature.branch,
-            BRANCHES: toMerge.map((i) => `- ${ops.issueBranch(i.id)}`).join("\n"),
-            VERIFY_COMMAND: cfg.verifyCommand,
-          },
-        });
-      });
-      await ops.pushBranch(feature.branch);
-    }
-
-    // Recompute the done set from git + labels, then finalize (bump + ready
-    // when every member is done).
-    const doneIds = await ops.effectiveDoneIds(memberIds, feature.branch);
-    const allDone =
-      memberIds.length > 0 && memberIds.every((id) => doneIds.has(id));
-    const { ready } = await finalizeFeaturePR(feature, members, doneIds);
-
-    // Persist the in-review labels LAST. If the feature is fully done but NOT
-    // confirmed ready (e.g. the version bump failed), withhold ALL labels so
-    // the feature stays in the work queue and is retried next round. Otherwise
-    // label every integrated member that isn't already labelled/closed so its
-    // issue leaves the queue. Keeping this after finalize means a crash before
-    // "ready" leaves at least one member unlabelled, which requeues the feature
-    // -- so recovery needs no extra pass.
-    //
-    // The skip guard here is label/closed state ONLY (getFeatureDoneIds), NOT
-    // the integration-aware doneAtStart: an issue integrated in an earlier
-    // round but never labelled (because the release agent kept failing) must
-    // still get labelled once the feature finally goes ready.
-    if (allDone && !ready) {
-      console.warn(
-        `  ⚠ feature ${feature.slug}: not ready; leaving issues queued for retry.`,
-      );
-      return;
-    }
-    const labelledOrClosed = await ops.getFeatureDoneIds(memberIds);
-    for (const id of memberIds) {
-      if (labelledOrClosed.has(id)) continue; // already in-review or closed
-      if (await ops.isIssueIntegrated(id, feature.branch)) {
-        await ops.addInReview(id);
+      // Integrate: which workable issue branches carry real work not yet on the
+      // feature branch? (git state, not "did this run commit", is the truth.)
+      const toMerge: PlanIssue[] = [];
+      for (const issue of workable) {
+        const branch = ops.issueBranch(issue.id);
+        if ((await ops.commitsAhead(cfg.targetBranch, branch)) === 0) continue; // missing or no work
+        if ((await ops.commitsAhead(feature.branch, branch)) > 0) toMerge.push(issue);
       }
+
+      if (toMerge.length > 0) {
+        await withFeatureSandbox(feature.branch, async (sandbox) => {
+          await sandbox.run({
+            name: `merger:${feature.slug}`,
+            maxIterations: 1,
+            agent: agentFor("merger"),
+            promptFile: promptPath(cfg, "merge-prompt.md"),
+            promptArgs: {
+              FEATURE_BRANCH: feature.branch,
+              BRANCHES: toMerge.map((i) => `- ${ops.issueBranch(i.id)}`).join("\n"),
+              VERIFY_COMMAND: cfg.verifyCommand,
+            },
+          });
+        });
+        await ops.pushBranch(feature.branch);
+      }
+
+      // Recompute the done set from git + labels, then finalize (bump + ready
+      // when every member is done).
+      const doneIds = await ops.effectiveDoneIds(memberIds, feature.branch);
+      const allDone =
+        memberIds.length > 0 && memberIds.every((id) => doneIds.has(id));
+      const { ready } = await finalizeFeaturePR(feature, members, doneIds);
+
+      // Persist the in-review labels LAST. If the feature is fully done but NOT
+      // confirmed ready (e.g. the version bump failed), withhold ALL labels so
+      // the feature stays in the work queue and is retried next round. Otherwise
+      // label every integrated member that isn't already labelled/closed so its
+      // issue leaves the queue. Keeping this after finalize means a crash before
+      // "ready" leaves at least one member unlabelled, which requeues the feature
+      // -- so recovery needs no extra pass.
+      //
+      // The skip guard here is label/closed state ONLY (getFeatureDoneIds), NOT
+      // the integration-aware doneAtStart: an issue integrated in an earlier
+      // round but never labelled (because the release agent kept failing) must
+      // still get labelled once the feature finally goes ready.
+      if (allDone && !ready) {
+        console.warn(
+          `  ⚠ feature ${feature.slug}: not ready; leaving issues queued for retry.`,
+        );
+        return;
+      }
+      const labelledOrClosed = await ops.getFeatureDoneIds(memberIds);
+      for (const id of memberIds) {
+        if (labelledOrClosed.has(id)) continue; // already in-review or closed
+        if (await ops.isIssueIntegrated(id, feature.branch)) {
+          await ops.addInReview(id);
+        }
+      }
+    } finally {
+      await clearInProgress(workable);
     }
   }
 
@@ -764,6 +804,19 @@ export async function runFeatureFlow(
     // collisions) is current.
     await ops.syncMainFromOrigin();
     await ops.ensureInReviewLabel();
+    await ops.ensureInProgressLabel();
+
+    // Nothing is being worked at this point in an iteration, so any issue
+    // still labelled in-progress is a leftover from a crashed run. Best-effort
+    // for the same reason mark/clearInProgress are: the label is informational.
+    try {
+      for (const id of await getInProgressIssueNumbers()) {
+        console.log(`Issue #${id} carries a stale in-progress label; clearing.`);
+        await ops.removeInProgress(id);
+      }
+    } catch (err) {
+      console.warn(`  ⚠ could not clear stale in-progress labels: ${errMsg(err)}`);
+    }
 
     let featurePRs = await ops.getOpenFeaturePRs();
 
